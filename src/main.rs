@@ -9,19 +9,16 @@ use shared_request::SharedRequest;
 
 #[tokio::main]
 async fn main() {
-    let shared_request = Arc::new(Mutex::new(SharedRequest {
-        device: "".to_string(),
-        ip: "".to_string(),
-        uri: "".to_string(),
-        updated: false,
-    }));
-
-    //    let device_names = Vec::from(["bedroom light".to_string(), "kitchen light".to_string()]);
+    let shared_request = Arc::new(Mutex::new(SharedRequest::NoUpdate));
 
     let mut devices = HashMap::new();
-    while devices.len() < devices::device_names.len() {
+    while devices.len() < devices::DEVICES.len() {
         devices = devices::get_devices().await;
         thread::sleep(time::Duration::from_millis(10000));
+    }
+    println!("Devices:");
+    for device in devices.keys() {
+        println!("    {}", &device);
     }
 
     let shared_request_clone = shared_request.clone();
@@ -34,16 +31,31 @@ async fn main() {
     loop {
         {
             let mut shared_request = shared_request_clone.lock().unwrap();
-            if shared_request.updated == true {
-                println!("```````````````````````````````````   Updated!");
-                shared_request.updated = false;
-            }
-            for (n, d) in devices.iter() {
-                let device = devices::get_device_status(&d.ip, &d.device.name).await;
-                //                dbg!(device);
+            match *shared_request {
+                SharedRequest::Command {
+                    ref device,
+                    ref action,
+                    ref target,
+                } => {
+                    let target = match target {
+                        Some(t) => t,
+                        None => "",
+                    };
+                    let located_device = devices.get(&device.clone()).unwrap();
+                    let url = format!(
+                        "http://{}/command?device={}&action={}&target={}",
+                        &located_device.ip,
+                        &device,
+                        &action.to_str().to_string(),
+                        &target
+                    );
+                    *shared_request = SharedRequest::NoUpdate;
+                }
+                SharedRequest::NoUpdate => {
+                    // println!("6666666666666 NoUpdate!!!");
+                }
             }
         }
-        tokio::time::sleep(tokio::time::Duration::from_millis(5000)).await;
-        //thread::sleep(time::Duration::from_millis(5000));
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     }
 }

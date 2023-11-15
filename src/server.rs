@@ -16,7 +16,7 @@ async fn index(
     println!("REQ: {req:?}");
     {
         let mut shared_request = shared_request_clone.lock().unwrap();
-        shared_request.updated = true;
+        *shared_request = SharedRequest::NoUpdate;
     }
     "Nothing here!"
 }
@@ -29,39 +29,47 @@ async fn command(
 ) -> HttpResponse {
     let device = match info.get("device") {
         Some(d) => d,
-        None => return HttpResponse::Ok().body("Oops, we didn't get the Device")
+        None => return HttpResponse::Ok().body("Oops, we didn't get the Device"),
     };
+    if !devices::DEVICES.contains(&device.as_str()) {
+        return HttpResponse::Ok().body("Oops, we didn't get the Device");
+    }
 
     let action = match info.get("action") {
         Some(a) => a,
-        None => return HttpResponse::Ok().body("Oops, we didn't get the Action")
+        None => return HttpResponse::Ok().body("Oops, we didn't get the Action"),
     };
     let action = match Action::from_str(action.as_str()) {
         Ok(a) => a,
-        Err(_) => return HttpResponse::Ok().body("Oops, Action was invalid")
+        Err(_) => return HttpResponse::Ok().body("Oops, Action was invalid"),
     };
 
-    let target: Option<usize> = match info.get("target") {
+    let target: Option<String> = match info.get("target") {
         Some(t) => {
             if t.as_str() != "" {
                 match t.parse::<usize>() {
                     Ok(n) => {
-                        if 0 <= n && n < 8 {
-                            Some(n) 
+                        if n < 8 {
+                            Some(t.clone())
                         } else {
-                            return HttpResponse::Ok().body("Oops, Target should be 0 <= t < 8") 
+                            return HttpResponse::Ok().body("Oops, Target should be 0 <= t < 8");
                         }
-                    },
-                    Err(_) => return HttpResponse::Ok().body("Oops, Target should be 0 <= t < 8"), 
+                    }
+                    Err(_) => return HttpResponse::Ok().body("Oops, Target should be 0 <= t < 8"),
                 }
             } else {
                 None
             }
-        },
-        None => None
+        }
+        None => None,
     };
-    dbg!(&target);
 
+    let mut shared_request = shared_request_clone.lock().unwrap();
+    *shared_request = SharedRequest::Command {
+        device: device.to_string(),
+        action: action,
+        target: target,
+    };
     let result = "place holder".to_string();
     HttpResponse::Ok().body(result)
 }
@@ -75,8 +83,6 @@ pub async fn run_server(shared_request_clone: Arc<Mutex<SharedRequest>>) -> std:
         App::new()
             .wrap(middleware::Logger::default())
             .data(shared_request_clone.clone())
-            //          .service(web::resource("/index.html").to(|| async { "Hello world!" }))
-            //            .service(web::resource("/instruction").to(instruction))
             .service(web::resource("/").to(index))
             .service(web::resource("/command").to(command))
     })

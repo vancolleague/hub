@@ -11,7 +11,7 @@ use serde_json::{Error, Value};
 
 use device::Device;
 
-pub const device_names: [&str; 2] = ["bedroom light", "kitchen light"];
+pub const DEVICES: [&str; 2] = ["bedroom light", "kitchen light"];
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, Serialize)]
 pub struct LocatedDevice {
@@ -63,7 +63,7 @@ pub async fn get_device_status(ip: &String, name: &String) -> Result<Device, Str
     }
 }
 
-async fn get_node(ip: String) -> Option<(HashMap<String, LocatedDevice>)> {
+async fn get_node(ip: String) -> Option<HashMap<String, LocatedDevice>> {
     let url = format!("http://{}/devices", ip);
     dbg!(&url);
     let device_text = match reqwest::get(&url).await {
