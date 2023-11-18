@@ -1,11 +1,13 @@
+use serde::{Deserialize, Serialize};
+
 use device;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub enum SharedRequest {
     Command {
         device: String,
         action: device::Action,
-        target: Option<String>,
+        target: Option<usize>,
     },
     NoUpdate,
 }

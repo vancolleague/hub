@@ -38,8 +38,8 @@ async fn main() {
                     ref target,
                 } => {
                     let target = match target {
-                        Some(t) => t,
-                        None => "",
+                        Some(t) => t.to_string(),
+                        None => String::new(),
                     };
                     let located_device = devices.get(&device.clone()).unwrap();
                     let url = format!(
