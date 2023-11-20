@@ -49,6 +49,8 @@ async fn main() {
                         &action.to_str().to_string(),
                         &target
                     );
+                    dbg!(&url);
+                    reqwest::get(&url).await.unwrap();
                     *shared_request = SharedRequest::NoUpdate;
                 }
                 SharedRequest::NoUpdate => {

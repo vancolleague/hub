@@ -28,7 +28,7 @@ async fn command(
     shared_request_clone: web::Data<Arc<Mutex<SharedRequest>>>,
 ) -> HttpResponse {
     let device = match info.get("device") {
-        Some(d) => d,
+        Some(d) => d.to_lowercase(),
         None => return HttpResponse::Ok().body("Oops, we didn't get the Device"),
     };
     if !DEVICES.contains(&device.as_str()) {
@@ -36,7 +36,7 @@ async fn command(
     }
 
     let action = match info.get("action") {
-        Some(a) => a,
+        Some(a) => a.to_lowercase(),
         None => return HttpResponse::Ok().body("Oops, we didn't get the Action"),
     };
     let action = match Action::from_str(action.as_str()) {
@@ -86,8 +86,9 @@ async fn instruction(
         None => return HttpResponse::Ok().body("Oops, we didn't get the instruction"),
     };
 
+    dbg!(&info);
     let mut device = String::new();
-    let instruction = instruction.replace("%20", " ");
+    let instruction = instruction.replace("%20", " ").to_lowercase();
     let mut instruction = instruction.split_whitespace();
     while !DEVICES.contains(&device.as_str()) {
         let word = match instruction.next() {
