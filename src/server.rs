@@ -7,10 +7,11 @@ use actix_web::{middleware, web, App, HttpRequest, HttpResponse, HttpServer};
 use device::{Action, Device};
 //mod crate::shared_request;
 use crate::devices::DEVICES;
-use crate::shared_request::SharedRequest;
+use crate::shared::{SharedConfig, SharedRequest};
 
 async fn index(
     req: HttpRequest,
+    shared_config_clone: web::Data<Arc<Mutex<SharedConfig>>>,
     shared_request_clone: web::Data<Arc<Mutex<SharedRequest>>>,
 ) -> &'static str {
     println!("REQ: {req:?}");
@@ -25,6 +26,7 @@ async fn index(
 async fn command(
     req: HttpRequest,
     info: web::Query<HashMap<String, String>>,
+    shared_config_clone: web::Data<Arc<Mutex<SharedConfig>>>,
     shared_request_clone: web::Data<Arc<Mutex<SharedRequest>>>,
 ) -> HttpResponse {
     let device = match info.get("device") {
@@ -79,6 +81,7 @@ async fn command(
 async fn instruction(
     req: HttpRequest,
     info: web::Query<HashMap<String, String>>,
+    shared_config_clone: web::Data<Arc<Mutex<SharedConfig>>>,
     shared_request_clone: web::Data<Arc<Mutex<SharedRequest>>>,
 ) -> HttpResponse {
     let instruction = match info.get("instruction") {
@@ -147,7 +150,10 @@ async fn instruction(
     HttpResponse::Ok().body(result)
 }
 
-pub async fn run_server(shared_request_clone: Arc<Mutex<SharedRequest>>) -> std::io::Result<()> {
+pub async fn run_server(
+    shared_config_clone: Arc<Mutex<SharedConfig>>,
+    shared_request_clone: Arc<Mutex<SharedRequest>>,
+) -> std::io::Result<()> {
     env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
 
     log::info!("starting HTTP server at http://localhost:8080");
@@ -155,6 +161,7 @@ pub async fn run_server(shared_request_clone: Arc<Mutex<SharedRequest>>) -> std:
     HttpServer::new(move || {
         App::new()
             .wrap(middleware::Logger::default())
+            .data(shared_config_clone.clone())
             .data(shared_request_clone.clone())
             .service(web::resource("/").to(index))
             .service(web::resource("/command").to(command))
