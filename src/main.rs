@@ -18,16 +18,17 @@ mod server;
 mod shared;
 use shared::{SharedConfig, SharedRequest};
 
-const EXIT_COMMAND: &str = "exit";
+const SHUTDOWN_COMMAND: &str = "shutdown";
 const LISTEN_ADDR: &str = "127.0.0.1:4000"; // Choose an appropriate address and port
 
-fn handle_client(mut stream: TcpStream, exit_flag: Arc<AtomicBool>) {
+// Flag when the stream consists of the shutdown command
+fn handle_client(mut stream: TcpStream, shutdown_flag: Arc<AtomicBool>) {
     let mut buffer = [0; 1024];
     match stream.read(&mut buffer) {
         Ok(size) => {
             let received = String::from_utf8_lossy(&buffer[..size]);
-            if received.trim() == EXIT_COMMAND {
-                exit_flag.store(true, Ordering::SeqCst);
+            if received.trim() == SHUTDOWN_COMMAND {
+                shutdown_flag.store(true, Ordering::SeqCst);
             }
         }
         Err(e) => eprintln!("Failed to receive data: {}", e),
@@ -50,35 +51,15 @@ async fn main() {
                         .action(clap::ArgAction::SetTrue)
                         .help("Special behavior without nodes"),
                 ),
-            // ... additional settings or arguments specific to "run" ...
         )
         .subcommand(
-            Command::new("exit").about("Exit's the program and it's it all down"), // ... additional settings or arguments specific to "run" ...
+            Command::new("shutdown").about("Shutdown's the program and it's it all down"), // ... additional settings or arguments specific to "run" ...
         )
-        // run
-        // exit
-        // restart
-        // get devices
-        /*        .arg(
-            Arg::new("config")
-                .short('c')
-                .long("config")
-                .value_name("FILE")
-                .help("Sets a custom config file")
-                .takes_value(true),
-        )
-        .arg(
-            Arg::new("INPUT")
-                .help("Sets the input file to use")
-                .required(true)
-                .index(1),
-        ) */
         .arg(
             Arg::new("log_level")
                 .long("log-level")
                 .value_name("LEVEL")
-                .help("Sets the level of logging"), //                .get_possible_values(["error", "warn", "info", "debug"])
-                                                    //                .takes_value(true),
+                .help("Sets the level of logging"),
         )
         .arg(
             Arg::new("quiet")
@@ -90,15 +71,29 @@ async fn main() {
             Arg::new("verbose")
                 .short('v')
                 .long("verbose")
-                // .multiple_occurrences(true)
                 .help("Increases verbosity of output"),
         )
         .get_matches();
 
     match command.subcommand() {
         Some(("run", sub_matches)) => {
-            let exit_flag = Arc::new(AtomicBool::new(false));
+            // Spawn a thread to handle the TCP server
+            let shutdown_flag = Arc::new(AtomicBool::new(false));
             let listener = TcpListener::bind(LISTEN_ADDR).expect("Failed to bind to address");
+            let shutdown_flag_clone = Arc::clone(&shutdown_flag);
+            thread::spawn(move || {
+                for stream in listener.incoming() {
+                    match stream {
+                        Ok(stream) => {
+                            let shutdown_flag_clone = Arc::clone(&shutdown_flag_clone);
+                            thread::spawn(move || {
+                                handle_client(stream, shutdown_flag_clone);
+                            });
+                        }
+                        Err(e) => eprintln!("Connection failed: {}", e),
+                    }
+                }
+            });
 
             // Get the current working directory
             let current_dir = match env::current_dir() {
@@ -110,8 +105,7 @@ async fn main() {
             };
 
             // Construct the path to the lock file
-            let lock_path = current_dir.join("your_app.lock");
-
+            let lock_path = current_dir.join("hub_app.lock");
             let file = match File::create(&lock_path) {
                 Ok(file) => file,
                 Err(e) => {
@@ -126,43 +120,29 @@ async fn main() {
                 process::exit(1);
             }
 
-            // Spawn a thread to handle the TCP server
-            let exit_flag_clone = Arc::clone(&exit_flag);
-            thread::spawn(move || {
-                for stream in listener.incoming() {
-                    match stream {
-                        Ok(stream) => {
-                            let exit_flag_clone = Arc::clone(&exit_flag_clone);
-                            thread::spawn(move || {
-                                handle_client(stream, exit_flag_clone);
-                            });
-                        }
-                        Err(e) => eprintln!("Connection failed: {}", e),
-                    }
-                }
-            });
-
+            // Set up stuff that needs to be shared between threads
             let shared_config = Arc::new(Mutex::new(SharedConfig {
                 Verbosity: String::from("some"),
             }));
             let shared_request = Arc::new(Mutex::new(SharedRequest::NoUpdate));
 
+            // Get the list of connected devices if applicable
             let mut devices = HashMap::new();
             if sub_matches.get_flag("no-nodes") {
                 println!("Skipping getting devices!");
             } else {
-                while devices.len() < devices::DEVICES.len() && !exit_flag.load(Ordering::SeqCst) {
+                while devices.len() < devices::DEVICES.len() && !shutdown_flag.load(Ordering::SeqCst) {
                     println!("Getting devices!!");
                     thread::sleep(time::Duration::from_millis(10000));
                     devices = devices::get_devices().await;
                 }
             };
-
             println!("Devices:");
             for device in devices.keys() {
                 println!("    {}", &device);
             }
 
+            // Start the http server with the appropreate info passed in
             let shared_config_clone = shared_config.clone();
             let shared_request_clone = shared_request.clone();
             thread::spawn(move || {
@@ -173,8 +153,9 @@ async fn main() {
                 ))
             });
 
+            // Handle commands passed along from the server
             let shared_request_clone = shared_request.clone();
-            while !exit_flag.load(Ordering::SeqCst) {
+            while !shutdown_flag.load(Ordering::SeqCst) {
                 {
                     let mut shared_request = shared_request_clone.lock().unwrap();
                     match *shared_request {
@@ -206,13 +187,13 @@ async fn main() {
                 }
                 tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
             }
-            println!("Exited!!!!!!!!");
+            println!("Shutdown!!!!!!!!");
             process::exit(0);
         }
-        Some(("exit", sub_matches)) => {
-            println!("Exiting the program!!!");
+        Some((SHUTDOWN_COMMAND, sub_matches)) => {
+            println!("Shutting down the program!!!");
             let mut stream = TcpStream::connect("127.0.0.1:4000").unwrap();
-            stream.write_all(b"exit").unwrap();
+            stream.write_all(SHUTDOWN_COMMAND.as_bytes()).unwrap();
             process::exit(0);
         }
         _ => {
