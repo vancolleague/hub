@@ -77,7 +77,8 @@ async fn main() {
 
     match command.subcommand() {
         Some(("run", sub_matches)) => {
-            // Spawn a thread to handle the TCP server
+            // Spawn a thread to handle the TCP server that's userd for sending/receiving
+            // commands from other consoles
             let shutdown_flag = Arc::new(AtomicBool::new(false));
             let listener = TcpListener::bind(LISTEN_ADDR).expect("Failed to bind to address");
             let shutdown_flag_clone = Arc::clone(&shutdown_flag);
@@ -185,7 +186,7 @@ async fn main() {
                         }
                     }
                 }
-                tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+                tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
             }
             println!("Shutdown!!!!!!!!");
             process::exit(0);
@@ -197,6 +198,10 @@ async fn main() {
             process::exit(0);
         }
         _ => {
+            println!("You must enter a command, perhapse you wanted:");
+            println!("  > hub run");
+            println!("or");
+            println!("  > hub help");
             process::exit(1);
         }
     }

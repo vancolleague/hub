@@ -23,7 +23,7 @@ async fn index(
 }
 
 // Expect to be http://ip:8080?device=device%20name&action=act&target=tar
-async fn command(
+async fn parsed_command(
     req: HttpRequest,
     info: web::Query<HashMap<String, String>>,
     shared_config_clone: web::Data<Arc<Mutex<SharedConfig>>>,
@@ -78,7 +78,7 @@ async fn command(
     HttpResponse::Ok().body(result)
 }
 
-async fn instruction(
+async fn command(
     req: HttpRequest,
     info: web::Query<HashMap<String, String>>,
     shared_config_clone: web::Data<Arc<Mutex<SharedConfig>>>,
@@ -164,8 +164,8 @@ pub async fn run_server(
             .data(shared_config_clone.clone())
             .data(shared_request_clone.clone())
             .service(web::resource("/").to(index))
+            .service(web::resource("/parsed_command").to(parsed_command))
             .service(web::resource("/command").to(command))
-            .service(web::resource("/instruction").to(instruction))
     })
     .bind(("0.0.0.0", 8080))?
     .run()
