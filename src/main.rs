@@ -49,7 +49,7 @@ async fn main() {
                         .short('n')
                         .long("no-nodes")
                         .action(clap::ArgAction::SetTrue)
-                        .help("Special behavior without nodes"),
+                        .help("Run without waiting to find all of the expected nodes"),
                 ),
         )
         .subcommand(
@@ -128,18 +128,20 @@ async fn main() {
             let shared_request = Arc::new(Mutex::new(SharedRequest::NoUpdate));
 
             // Get the list of connected devices if applicable
-            let mut devices = HashMap::new();
+            let mut located_devices = HashMap::new();
             if sub_matches.get_flag("no-nodes") {
                 println!("Skipping getting devices!");
             } else {
-                while devices.len() < devices::DEVICES.len() && !shutdown_flag.load(Ordering::SeqCst) {
+                while located_devices.len() < devices::DEVICES.len()
+                    && !shutdown_flag.load(Ordering::SeqCst)
+                {
                     println!("Getting devices!!");
                     thread::sleep(time::Duration::from_millis(10000));
-                    devices = devices::get_devices().await;
+                    located_devices = devices::get_devices().await;
                 }
             };
             println!("Devices:");
-            for device in devices.keys() {
+            for device in located_devices.keys() {
                 println!("    {}", &device);
             }
 
@@ -155,39 +157,12 @@ async fn main() {
             });
 
             // Handle commands passed along from the server
-            let shared_request_clone = shared_request.clone();
-            while !shutdown_flag.load(Ordering::SeqCst) {
-                {
-                    let mut shared_request = shared_request_clone.lock().unwrap();
-                    match *shared_request {
-                        SharedRequest::Command {
-                            ref device,
-                            ref action,
-                            ref target,
-                        } => {
-                            let target = match target {
-                                Some(t) => t.to_string(),
-                                None => String::new(),
-                            };
-                            let located_device = devices.get(&device.clone()).unwrap();
-                            let url = format!(
-                                "http://{}/command?device={}&action={}&target={}",
-                                &located_device.ip,
-                                &device,
-                                &action.to_str().to_string(),
-                                &target
-                            );
-                            dbg!(&url);
-                            reqwest::get(&url).await.unwrap();
-                            *shared_request = SharedRequest::NoUpdate;
-                        }
-                        SharedRequest::NoUpdate => {
-                            // println!("6666666666666 NoUpdate!!!");
-                        }
-                    }
-                }
-                tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-            }
+            business_logic(
+                located_devices,
+                shutdown_flag.clone(),
+                shared_request.clone(),
+            )
+            .await;
             println!("Shutdown!!!!!!!!");
             process::exit(0);
         }
@@ -204,5 +179,44 @@ async fn main() {
             println!("  > hub help");
             process::exit(1);
         }
+    }
+}
+
+async fn business_logic(
+    located_devices: HashMap<String, devices::LocatedDevice>,
+    shutdown_flag: Arc<AtomicBool>,
+    shared_request_clone: Arc<Mutex<SharedRequest>>,
+) {
+    while !shutdown_flag.load(Ordering::SeqCst) {
+        {
+            let mut shared_request = shared_request_clone.lock().unwrap();
+            match *shared_request {
+                SharedRequest::Command {
+                    ref device,
+                    ref action,
+                    ref target,
+                } => {
+                    let target = match target {
+                        Some(t) => t.to_string(),
+                        None => String::new(),
+                    };
+                    let located_device = located_devices.get(&device.clone()).unwrap();
+                    let url = format!(
+                        "http://{}/command?device={}&action={}&target={}",
+                        &located_device.ip,
+                        &device,
+                        &action.to_str().to_string(),
+                        &target
+                    );
+                    dbg!(&url);
+                    reqwest::get(&url).await.unwrap();
+                    *shared_request = SharedRequest::NoUpdate;
+                }
+                SharedRequest::NoUpdate => {
+                    // println!("6666666666666 NoUpdate!!!");
+                }
+            }
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
     }
 }
