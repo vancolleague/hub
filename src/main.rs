@@ -13,8 +13,9 @@ use std::{thread, time};
 
 use fs2::FileExt;
 
+mod ble_server;
 mod devices;
-mod server;
+mod http_server;
 mod shared;
 use shared::{SharedConfig, SharedRequest};
 
@@ -150,11 +151,22 @@ async fn main() {
             let shared_request_clone = shared_request.clone();
             thread::spawn(move || {
                 let runtime = tokio::runtime::Runtime::new().unwrap();
-                runtime.block_on(server::run_server(
+                runtime.block_on(http_server::run_http_server(
                     shared_config_clone,
                     shared_request_clone,
                 ))
             });
+
+            println!("Http server started");
+
+            thread::spawn(move || {
+                let runtime = tokio::runtime::Runtime::new().unwrap();
+                runtime.block_on(async {
+                    ble_server::run_ble_server().await;
+                });
+            });
+
+            println!("Ble server started");
 
             // Handle commands passed along from the server
             business_logic(

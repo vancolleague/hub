@@ -150,7 +150,7 @@ async fn command(
     HttpResponse::Ok().body(result)
 }
 
-pub async fn run_server(
+pub async fn run_http_server(
     shared_config_clone: Arc<Mutex<SharedConfig>>,
     shared_request_clone: Arc<Mutex<SharedRequest>>,
 ) -> std::io::Result<()> {
