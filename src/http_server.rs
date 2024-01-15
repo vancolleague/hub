@@ -1,8 +1,10 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::thread;
 
 use actix_web::{middleware, web, App, HttpRequest, HttpResponse, HttpServer};
+
+use tokio::{main, spawn, sync::Mutex};
 
 use device::{Action, Device};
 //mod crate::shared_request;
@@ -16,7 +18,7 @@ async fn index(
 ) -> &'static str {
     println!("REQ: {req:?}");
     {
-        let mut shared_request = shared_request_clone.lock().unwrap();
+        let mut shared_request = shared_request_clone.lock().await;
         *shared_request = SharedRequest::NoUpdate;
     }
     "Nothing here!"
@@ -67,7 +69,7 @@ async fn parsed_command(
     };
 
     let mut result = {
-        let mut shared_request = shared_request_clone.lock().unwrap();
+        let mut shared_request = shared_request_clone.lock().await;
         *shared_request = SharedRequest::Command {
             device: device.to_string(),
             action: action,
@@ -139,7 +141,7 @@ async fn command(
     };
 
     let result = {
-        let mut shared_request = shared_request_clone.lock().unwrap();
+        let mut shared_request = shared_request_clone.lock().await;
         *shared_request = SharedRequest::Command {
             device: device.to_string(),
             action: action,
@@ -167,7 +169,8 @@ pub async fn run_http_server(
             .service(web::resource("/parsed_command").to(parsed_command))
             .service(web::resource("/command").to(command))
     })
-    .bind(("0.0.0.0", 8080))?
+    .bind(("0.0.0.0", 8080))
+    .unwrap()
     .run()
     .await
 }

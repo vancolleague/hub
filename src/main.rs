@@ -8,10 +8,11 @@ use std::net::{TcpListener, TcpStream};
 use std::path::Path;
 use std::process;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::{thread, time};
 
 use fs2::FileExt;
+use tokio::{main, spawn, sync::Mutex};
 
 mod ble_server;
 mod devices;
@@ -23,7 +24,7 @@ const SHUTDOWN_COMMAND: &str = "shutdown";
 const LISTEN_ADDR: &str = "127.0.0.1:4000"; // Choose an appropriate address and port
 
 // Flag when the stream consists of the shutdown command
-fn handle_client(mut stream: TcpStream, shutdown_flag: Arc<AtomicBool>) {
+async fn handle_client(mut stream: TcpStream, shutdown_flag: Arc<AtomicBool>) {
     let mut buffer = [0; 1024];
     match stream.read(&mut buffer) {
         Ok(size) => {
@@ -83,14 +84,12 @@ async fn main() {
             let shutdown_flag = Arc::new(AtomicBool::new(false));
             let listener = TcpListener::bind(LISTEN_ADDR).expect("Failed to bind to address");
             let shutdown_flag_clone = Arc::clone(&shutdown_flag);
-            thread::spawn(move || {
+            tokio::spawn(async move {
                 for stream in listener.incoming() {
                     match stream {
                         Ok(stream) => {
                             let shutdown_flag_clone = Arc::clone(&shutdown_flag_clone);
-                            thread::spawn(move || {
-                                handle_client(stream, shutdown_flag_clone);
-                            });
+                            handle_client(stream, shutdown_flag_clone).await;
                         }
                         Err(e) => eprintln!("Connection failed: {}", e),
                     }
@@ -149,27 +148,19 @@ async fn main() {
             // Start the http server with the appropreate info passed in
             let shared_config_clone = shared_config.clone();
             let shared_request_clone = shared_request.clone();
-            thread::spawn(move || {
-                let runtime = tokio::runtime::Runtime::new().unwrap();
-                runtime.block_on(http_server::run_http_server(
-                    shared_config_clone,
-                    shared_request_clone,
-                ))
+            tokio::spawn(async move {
+                http_server::run_http_server(shared_config_clone, shared_request_clone).await
             });
-
             println!("Http server started");
-            //ble_server::run_ble_server();
-            thread::spawn(move || {
-                let runtime = tokio::runtime::Runtime::new().unwrap();
-                runtime.block_on(async {
-                    ble_server::run_ble_server().await;
-                });
-            });
+
+            // Start the bluetooth server
+            let shared_request_clone = shared_request.clone();
+            tokio::spawn(async move { ble_server::run_ble_server(shared_request_clone).await });
 
             println!("Ble server started");
-    //while !shutdown_flag.load(Ordering::SeqCst) {
-      //  tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-        //}
+            //while !shutdown_flag.load(Ordering::SeqCst) {
+            //  tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+            //}
             // Handle commands passed along from the server
             business_logic(
                 located_devices,
@@ -203,7 +194,7 @@ async fn business_logic(
 ) {
     while !shutdown_flag.load(Ordering::SeqCst) {
         {
-            let mut shared_request = shared_request_clone.lock().unwrap();
+            let mut shared_request = shared_request_clone.lock().await;
             match *shared_request {
                 SharedRequest::Command {
                     ref device,
@@ -214,17 +205,24 @@ async fn business_logic(
                         Some(t) => t.to_string(),
                         None => String::new(),
                     };
-                    let located_device = located_devices.get(&device.clone()).unwrap();
-                    let url = format!(
-                        "http://{}/command?device={}&action={}&target={}",
-                        &located_device.ip,
-                        &device,
-                        &action.to_str().to_string(),
-                        &target
-                    );
-                    dbg!(&url);
-                    reqwest::get(&url).await.unwrap();
-                    *shared_request = SharedRequest::NoUpdate;
+                    let located_device = located_devices.get(&device.clone());
+                    match located_device {
+                        Some(d) => {
+                            let url = format!(
+                                "http://{}/command?device={}&action={}&target={}",
+                                &d.ip,
+                                &device,
+                                &action.to_str().to_string(),
+                                &target
+                            );
+                            dbg!(&url);
+                            reqwest::get(&url).await.unwrap();
+                            *shared_request = SharedRequest::NoUpdate;
+                        }
+                        None => {
+                            //println!("no device found");
+                        }
+                    }
                 }
                 SharedRequest::NoUpdate => {
                     // println!("6666666666666 NoUpdate!!!");
