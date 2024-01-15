@@ -11,6 +11,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::{thread, time};
 
+use device::Action;
 use fs2::FileExt;
 use tokio::{main, spawn, sync::Mutex};
 
@@ -192,6 +193,7 @@ async fn business_logic(
     shutdown_flag: Arc<AtomicBool>,
     shared_request_clone: Arc<Mutex<SharedRequest>>,
 ) {
+    let mut last_device = (String::new(), Action::On, String::new());
     while !shutdown_flag.load(Ordering::SeqCst) {
         {
             let mut shared_request = shared_request_clone.lock().await;
@@ -205,22 +207,27 @@ async fn business_logic(
                         Some(t) => t.to_string(),
                         None => String::new(),
                     };
-                    let located_device = located_devices.get(&device.clone());
-                    match located_device {
-                        Some(d) => {
-                            let url = format!(
-                                "http://{}/command?device={}&action={}&target={}",
-                                &d.ip,
-                                &device,
-                                &action.to_str().to_string(),
-                                &target
-                            );
-                            dbg!(&url);
-                            reqwest::get(&url).await.unwrap();
-                            *shared_request = SharedRequest::NoUpdate;
-                        }
-                        None => {
-                            //println!("no device found");
+                    if last_device != (device.clone(), action.clone(), target.clone()) {
+                        last_device = (device.clone(), action.clone(), target.clone());
+                        // dbg!{&last_device};
+                        let located_device = located_devices.get(&device.clone());
+                        // dbg! {&located_device};
+                        match located_device {
+                            Some(d) => {
+                                let url = format!(
+                                    "http://{}/command?device={}&action={}&target={}",
+                                    &d.ip,
+                                    &device,
+                                    &action.to_str().to_string(),
+                                    &target
+                                );
+                                dbg!(&url);
+                                reqwest::get(&url).await.unwrap();
+                                *shared_request = SharedRequest::NoUpdate;
+                            }
+                            None => {
+                                //println!("no device found");
+                            }
                         }
                     }
                 }
