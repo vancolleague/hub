@@ -158,7 +158,7 @@ async fn main() {
             });
 
             println!("Http server started");
-
+            //ble_server::run_ble_server();
             thread::spawn(move || {
                 let runtime = tokio::runtime::Runtime::new().unwrap();
                 runtime.block_on(async {
@@ -167,7 +167,9 @@ async fn main() {
             });
 
             println!("Ble server started");
-
+    //while !shutdown_flag.load(Ordering::SeqCst) {
+      //  tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+        //}
             // Handle commands passed along from the server
             business_logic(
                 located_devices,

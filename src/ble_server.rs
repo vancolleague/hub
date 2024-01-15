@@ -17,19 +17,13 @@ use tokio::{
     time::sleep,
 };
 
-// include!("gatt.inc");
 const SERVICE_UUID: Uuid = Uuid::from_u128(0x36bc0fe1b00742809ec6b36c8bc98537);
 const CHARACTERISTIC_UUID: Uuid = Uuid::from_u128(0x2a4fae8107134e1fa8187ac56e4f13e4);
 const CHARACTERISTIC_UUID2: Uuid = Uuid::from_u128(0xa584507902e74f44b67902b90775abda);
 #[allow(dead_code)]
 const MANUFACTURER_ID: u16 = 0x45F1;
 
-//#[tokio::main(flavor = "current_thread")]
 pub async fn run_ble_server() { 
-    println!("Starting ble server");
-    dbg!(SERVICE_UUID);
-    dbg!(CHARACTERISTIC_UUID);
-    dbg!(CHARACTERISTIC_UUID2);
     let session = bluer::Session::new().await.unwrap();
     let adapter = session.default_adapter().await.unwrap();
     adapter.set_powered(true).await.unwrap();
@@ -197,19 +191,16 @@ pub async fn run_ble_server() {
         }],
         ..Default::default()
     };
-//    let app_handle = adapter.serve_gatt_application(app).await?;
+    let app_handle = adapter.serve_gatt_application(app).await.unwrap();
 
-      adapter.serve_gatt_application(app).await.unwrap();
-//    println!("Service ready. Press enter to quit.");
-//    let stdin = BufReader::new(tokio::io::stdin());
-//    let mut lines = stdin.lines();
-//    let _ = lines.next_line().await;
+    println!("Service ready. Press enter to quit.");
+    let stdin = BufReader::new(tokio::io::stdin());
+    let mut lines = stdin.lines();
+    let _ = lines.next_line().await;
 
-//    println!("Removing service and advertisement");
-//    drop(app_handle);
-//    drop(adv_handle);
-//    sleep(Duration::from_secs(1)).await;
-
-//    Ok(())
+    println!("Removing service and advertisement");
+    drop(app_handle);
+    drop(adv_handle);
+    sleep(Duration::from_secs(1)).await;
 }
 
