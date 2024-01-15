@@ -5,13 +5,30 @@ use std::process::Command;
 use regex::Regex;
 use reqwest;
 
+use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use serde_json;
 use serde_json::{Error, Value};
 
 use device::Device;
 
-pub const DEVICES: [&str; 2] = ["bedroom light", "kitchen light"];
+lazy_static! {
+    pub static ref DEVICES: HashMap<&'static str, &'static str> = {
+        let mut d = HashMap::new();
+        d.insert("bedroom light", "bl");
+        d.insert("kitchen light", "kl");
+        d
+    };
+}
+
+pub fn get_device_name_from_abbreviation(abbr: &str) -> Result<&'static str, &'static str> {
+    for (k, v) in DEVICES.iter() {
+        if v == &abbr {
+            return Ok(k);
+        }
+    }
+    Err("Bad Abbreviation")
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, Serialize)]
 pub struct LocatedDevice {

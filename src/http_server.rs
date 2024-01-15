@@ -33,7 +33,7 @@ async fn parsed_command(
         Some(d) => d.to_lowercase(),
         None => return HttpResponse::Ok().body("Oops, we didn't get the Device"),
     };
-    if !DEVICES.contains(&device.as_str()) {
+    if !DEVICES.contains_key(&device.as_str()) {
         return HttpResponse::Ok().body("Oops, we didn't get the Device");
     }
 
@@ -93,7 +93,7 @@ async fn command(
     let mut device = String::new();
     let instruction = instruction.replace("%20", " ").to_lowercase();
     let mut instruction = instruction.split_whitespace();
-    while !DEVICES.contains(&device.as_str()) {
+    while !DEVICES.contains_key(&device.as_str()) {
         let word = match instruction.next() {
             Some(w) => w,
             None => return HttpResponse::Ok().body("Oops, we didn't get a device!"),
