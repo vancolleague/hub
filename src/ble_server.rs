@@ -74,11 +74,17 @@ pub async fn run_ble_server(shared_request: Arc<Mutex<SharedRequest>>) {
                             let value = value_read.clone();
                             let shared_request = shared_read_request.clone();
                             async move {
-                                let value = value.lock().await.clone();
-                                println!("Read request {:?} with value {:x?}", &req, &value);
-                                let mut shared_request_guard = shared_request.lock().await;
-                                *shared_request_guard = SharedRequest::SliderInquiry;
-                                Ok(value)
+                                {
+                                    let value = value.lock().await.clone();
+                                    println!("Read request {:?} with value {:x?}", &req, &value);
+                                    let mut shared_request_guard = shared_request.lock().await;
+                                    *shared_request_guard = SharedRequest::SliderInquiry;
+                                }
+                                println!("about to wait for stuff");
+                                let response =
+                                    wait_for_inquiry_response(shared_request.clone()).await;
+                                println!("BLE response: {}", &response);
+                                Ok(response.as_bytes().to_vec())
                             }
                             .boxed()
                         }),
@@ -240,4 +246,28 @@ pub async fn run_ble_server(shared_request: Arc<Mutex<SharedRequest>>) {
     drop(app_handle);
     drop(adv_handle);
     sleep(Duration::from_secs(1)).await;
+}
+
+// todo: this is super ugly
+async fn wait_for_inquiry_response(shared_request: Arc<Mutex<SharedRequest>>) -> String {
+    println!("Waiting???????????");
+    {
+        dbg! {shared_request.lock().await};
+    }
+    loop {
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        {
+            let lock = shared_request.lock().await;
+         //   dbg! {&lock};
+            if let SharedRequest::SliderResponse { .. } = *lock {
+                break;
+            }
+        }
+    }
+    let lock = shared_request.lock().await;
+    if let SharedRequest::SliderResponse { response } = &*lock {
+        response.clone()
+    } else {
+        String::new()
+    }
 }

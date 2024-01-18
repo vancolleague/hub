@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::{thread, time};
 
-use device::Action;
+use device::{Action, Device};
 use fs2::FileExt;
 use futures::future::join_all;
 use tokio::{main, spawn, sync::Mutex, task};
@@ -231,11 +231,33 @@ async fn business_logic(
                             }
                         }
                     }
-                },
+                }
                 SharedRequest::SliderInquiry => {
-                },
-                SharedRequest::SliderResponse { response } => {
-                },
+                    let mut futures = Vec::new();
+
+                    for ld in located_devices.values() {
+                        //let mut future = task::spawn(devices::get_device_status(&ld.ip, &ld.device.name));
+                        let future =
+                            get_device_status_helper(ld.ip.clone(), ld.device.name.clone());
+                        futures.push(future);
+                    }
+
+                    let results = join_all(futures).await;
+                    let mut result2 = HashMap::new();
+                    for item in results {
+                        let one = item.clone();
+                        let two = item.clone();
+                        result2.insert(one.unwrap().name, two.unwrap().target);
+                    }
+                    let response = format!(
+                        "{}{}",
+                        result2.get("kitchen light").unwrap().to_string(),
+                        result2.get("bedroom light").unwrap().to_string()
+                    );
+                    dbg! {&response};
+                    *shared_request = SharedRequest::SliderResponse { response: response };
+                }
+                SharedRequest::SliderResponse { response } => {}
                 SharedRequest::NoUpdate => {
                     // println!("6666666666666 NoUpdate!!!");
                 }
@@ -243,4 +265,8 @@ async fn business_logic(
         }
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
     }
+}
+
+async fn get_device_status_helper(ip: String, name: String) -> Result<Device, String> {
+    devices::get_device_status(&ip, &name).await
 }
