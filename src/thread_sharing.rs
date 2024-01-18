@@ -14,5 +14,9 @@ pub enum SharedRequest {
         action: device::Action,
         target: Option<usize>,
     },
+    SliderInquiry,
+    SliderResponse {
+        response: String,
+    },
     NoUpdate,
 }

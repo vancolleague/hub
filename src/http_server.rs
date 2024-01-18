@@ -9,7 +9,7 @@ use tokio::{main, spawn, sync::Mutex};
 use device::{Action, Device};
 //mod crate::shared_request;
 use crate::devices::DEVICES;
-use crate::shared::{SharedConfig, SharedRequest};
+use crate::thread_sharing::{SharedConfig, SharedRequest};
 
 async fn index(
     req: HttpRequest,

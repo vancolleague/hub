@@ -19,10 +19,10 @@ use tokio::{
 
 use device::{Action, Device};
 
-use crate::shared::SharedRequest;
+use crate::thread_sharing::SharedRequest;
 
 const SERVICE_UUID: Uuid = Uuid::from_u128(0x36bc0fe1b00742809ec6b36c8bc98537);
-const KITCHEN_LIGHT_UUID: Uuid = Uuid::from_u128(0x2a4fae8107134e1fa8187ac56e4f13e4);
+const SLIDERS_UUID: Uuid = Uuid::from_u128(0x2a4fae8107134e1fa8187ac56e4f13e4);
 const CHARACTERISTIC_UUID: Uuid = Uuid::from_u128(0xa584507902e74f44b67902b90775abda);
 #[allow(dead_code)]
 const MANUFACTURER_ID: u16 = 0x45F1;
@@ -65,7 +65,7 @@ pub async fn run_ble_server(shared_request_clone: Arc<Mutex<SharedRequest>>) {
             primary: true,
             characteristics: vec![
                 Characteristic {
-                    uuid: KITCHEN_LIGHT_UUID,
+                    uuid: SLIDERS_UUID,
                     read: Some(CharacteristicRead {
                         read: true,
                         fun: Box::new(move |req| {

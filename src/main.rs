@@ -13,13 +13,14 @@ use std::{thread, time};
 
 use device::Action;
 use fs2::FileExt;
-use tokio::{main, spawn, sync::Mutex};
+use futures::future::join_all;
+use tokio::{main, spawn, sync::Mutex, task};
 
 mod ble_server;
 mod devices;
 mod http_server;
-mod shared;
-use shared::{SharedConfig, SharedRequest};
+mod thread_sharing;
+use thread_sharing::{SharedConfig, SharedRequest};
 
 const SHUTDOWN_COMMAND: &str = "shutdown";
 const LISTEN_ADDR: &str = "127.0.0.1:4000"; // Choose an appropriate address and port
@@ -197,7 +198,7 @@ async fn business_logic(
     while !shutdown_flag.load(Ordering::SeqCst) {
         {
             let mut shared_request = shared_request_clone.lock().await;
-            match *shared_request {
+            match &*shared_request {
                 SharedRequest::Command {
                     ref device,
                     ref action,
@@ -230,7 +231,11 @@ async fn business_logic(
                             }
                         }
                     }
-                }
+                },
+                SharedRequest::SliderInquiry => {
+                },
+                SharedRequest::SliderResponse { response } => {
+                },
                 SharedRequest::NoUpdate => {
                     // println!("6666666666666 NoUpdate!!!");
                 }
