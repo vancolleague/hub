@@ -19,6 +19,7 @@ use tokio::{
 
 use device::{Action, Device};
 
+use crate::devices::DEVICES;
 use crate::thread_sharing::SharedRequest;
 
 const SERVICE_UUID: Uuid = Uuid::from_u128(0x36bc0fe1b00742809ec6b36c8bc98537);
@@ -98,8 +99,14 @@ pub async fn run_ble_server(shared_request: Arc<Mutex<SharedRequest>>) {
                             let shared_request = shared_write_request.clone();
                             async move {
                                 let text = std::str::from_utf8(&new_value).unwrap();
-                                println!("Write request {:?} with value {:x?}", &req, &text);
-                                let device = text.chars().take(2).collect::<String>();
+                                let device_abbr = text.chars().take(2).collect::<String>();
+                                let mut device = String::new();
+                                for (k, v) in DEVICES.iter() {
+                                    if v == &device_abbr.as_str() {
+                                        device = k.to_string();
+                                        break;
+                                    }
+                                }
                                 let action = text.chars().skip(2).take(2).collect::<String>();
                                 let action = Action::from_str_abbr(action.as_str()).unwrap();
                                 let target = if action == Action::Set {
@@ -109,7 +116,6 @@ pub async fn run_ble_server(shared_request: Arc<Mutex<SharedRequest>>) {
                                 } else {
                                     None
                                 };
-
                                 let mut shared_request_guard = shared_request.lock().await;
                                 *shared_request_guard = SharedRequest::Command {
                                     device: device,
@@ -117,8 +123,10 @@ pub async fn run_ble_server(shared_request: Arc<Mutex<SharedRequest>>) {
                                     target: target,
                                 };
                                 // println!("Write request {:?} with value {:x?}", &req, &new_value);
-                                let mut value = value.lock().await;
-                                *value = new_value;
+                                {
+                                    let mut value = value.lock().await;
+                                    *value = new_value;
+                                }
                                 Ok(())
                             }
                             .boxed()
@@ -258,7 +266,7 @@ async fn wait_for_inquiry_response(shared_request: Arc<Mutex<SharedRequest>>) ->
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         {
             let lock = shared_request.lock().await;
-         //   dbg! {&lock};
+            //   dbg! {&lock};
             if let SharedRequest::SliderResponse { .. } = *lock {
                 break;
             }

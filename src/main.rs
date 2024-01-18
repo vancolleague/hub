@@ -210,11 +210,12 @@ async fn business_logic(
                     };
                     if last_device != (device.clone(), action.clone(), target.clone()) {
                         last_device = (device.clone(), action.clone(), target.clone());
-                        // dbg!{&last_device};
+                        dbg! {&last_device};
                         let located_device = located_devices.get(&device.clone());
-                        // dbg! {&located_device};
+                        dbg! {&located_device};
                         match located_device {
                             Some(d) => {
+                                // println!("Command received!!! {}, {}, {}");
                                 let url = format!(
                                     "http://{}/command?device={}&action={}&target={}",
                                     &d.ip,
