@@ -27,7 +27,7 @@ const CHARACTERISTIC_UUID: Uuid = Uuid::from_u128(0xa584507902e74f44b67902b90775
 #[allow(dead_code)]
 const MANUFACTURER_ID: u16 = 0x45F1;
 
-pub async fn run_ble_server(shared_request_clone: Arc<Mutex<SharedRequest>>) {
+pub async fn run_ble_server(shared_request: Arc<Mutex<SharedRequest>>) {
     let session = bluer::Session::new().await.unwrap();
     let adapter = session.default_adapter().await.unwrap();
     adapter.set_powered(true).await.unwrap();
@@ -52,6 +52,8 @@ pub async fn run_ble_server(shared_request_clone: Arc<Mutex<SharedRequest>>) {
         "Serving GATT service on Bluetooth adapter {}",
         adapter.name()
     );
+    let shared_read_request = shared_request.clone();
+    let shared_write_request = shared_request.clone();
     let value = Arc::new(Mutex::new(vec![0x10, 0x01, 0x01, 0x10]));
     let value_read = value.clone();
     let value_write = value.clone();
@@ -70,9 +72,12 @@ pub async fn run_ble_server(shared_request_clone: Arc<Mutex<SharedRequest>>) {
                         read: true,
                         fun: Box::new(move |req| {
                             let value = value_read.clone();
+                            let shared_request = shared_read_request.clone();
                             async move {
                                 let value = value.lock().await.clone();
                                 println!("Read request {:?} with value {:x?}", &req, &value);
+                                let mut shared_request_guard = shared_request.lock().await;
+                                *shared_request_guard = SharedRequest::SliderInquiry;
                                 Ok(value)
                             }
                             .boxed()
@@ -84,7 +89,7 @@ pub async fn run_ble_server(shared_request_clone: Arc<Mutex<SharedRequest>>) {
                         write_without_response: true,
                         method: CharacteristicWriteMethod::Fun(Box::new(move |new_value, req| {
                             let value = value_write.clone();
-                            let shared_request_clone = shared_request_clone.clone();
+                            let shared_request = shared_write_request.clone();
                             async move {
                                 let text = std::str::from_utf8(&new_value).unwrap();
                                 println!("Write request {:?} with value {:x?}", &req, &text);
@@ -99,8 +104,8 @@ pub async fn run_ble_server(shared_request_clone: Arc<Mutex<SharedRequest>>) {
                                     None
                                 };
 
-                                let mut shared_request = shared_request_clone.lock().await;
-                                *shared_request = SharedRequest::Command {
+                                let mut shared_request_guard = shared_request.lock().await;
+                                *shared_request_guard = SharedRequest::Command {
                                     device: device,
                                     action: action,
                                     target: target,
