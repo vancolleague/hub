@@ -11,16 +11,21 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::{thread, time};
 
+use bluer::Uuid;
 use device::{Action, Device};
 use fs2::FileExt;
 use futures::future::join_all;
-use tokio::{main, spawn, sync::Mutex, task};
+use tokio::{
+    main, spawn,
+    sync::{mpsc, Mutex},
+    task,
+};
 
 mod ble_server;
 mod devices;
 mod http_server;
 mod thread_sharing;
-use thread_sharing::{SharedConfig, SharedRequest};
+use thread_sharing::{SharedBLEAction, SharedConfig, SharedGetRequest};
 
 const SHUTDOWN_COMMAND: &str = "shutdown";
 const LISTEN_ADDR: &str = "127.0.0.1:4000"; // Choose an appropriate address and port
@@ -54,6 +59,13 @@ async fn main() {
                         .long("no-nodes")
                         .action(clap::ArgAction::SetTrue)
                         .help("Run without waiting to find all of the expected nodes"),
+                )
+                .arg(
+                    Arg::new("node-count")
+                        .short('c')
+                        .long("node-count")
+                        .action(clap::ArgAction::Set)
+                        .help("Set the number of nodes to look for."),
                 ),
         )
         .subcommand(
@@ -125,23 +137,32 @@ async fn main() {
 
             // Set up stuff that needs to be shared between threads
             let shared_config = Arc::new(Mutex::new(SharedConfig {
-                Verbosity: String::from("some"),
+                verbosity: String::from("some"),
             }));
-            let shared_request = Arc::new(Mutex::new(SharedRequest::NoUpdate));
+            let shared_request = Arc::new(Mutex::new(SharedGetRequest::NoUpdate));
 
             // Get the list of connected devices if applicable
             let mut located_devices = HashMap::new();
+            let node_count: Option<&String> = sub_matches.get_one("node-count");
             if sub_matches.get_flag("no-nodes") {
                 println!("Skipping getting devices!");
             } else {
-                while located_devices.len() < devices::DEVICES.len()
-                    && !shutdown_flag.load(Ordering::SeqCst)
-                {
-                    println!("Getting devices!!");
-                    thread::sleep(time::Duration::from_millis(10000));
-                    located_devices = devices::get_devices().await;
+                println!("Getting Devices!!");
+                match node_count { 
+                    Some(nc) => {
+                        let nc: usize = nc.parse().unwrap();
+                        while located_devices.len() < nc && !shutdown_flag.load(Ordering::SeqCst) {
+                            thread::sleep(time::Duration::from_millis(10000));
+                            located_devices = devices::get_devices().await;
+                        }
+                    }
+                    None => {
+                        thread::sleep(time::Duration::from_millis(10000));
+                        located_devices = devices::get_devices().await;
+                    }
                 }
-            };
+            }
+
             println!("Devices:");
             for device in located_devices.keys() {
                 println!("    {}", &device);
@@ -150,30 +171,33 @@ async fn main() {
             // Start the http server with the appropreate info passed in
             let shared_config_clone = shared_config.clone();
             let shared_request_clone = shared_request.clone();
+            let devices = located_devices.iter().map(|(u, ld)| (ld.device.name.clone(), u.clone())).collect::<Vec<(String, Uuid)>>();
             tokio::spawn(async move {
-                http_server::run_http_server(shared_config_clone, shared_request_clone).await
+                http_server::run_http_server(shared_config_clone, shared_request_clone, devices).await
             });
             println!("Http server started");
 
             // Start the bluetooth server
-            let shared_request_clone = shared_request.clone();
-            tokio::spawn(async move { ble_server::run_ble_server(shared_request_clone).await });
+            let shared_ble_action = Arc::new(Mutex::new(thread_sharing::SharedBLEAction::NoUpdate));
+            let shared_ble_action_clone = shared_ble_action.clone();
+            let devices: Vec<(String, Uuid)> = located_devices
+                .iter()
+                .map(|(_, ld)| (ld.device.name.clone(), ld.device.uuid.clone()))
+                .collect();
+            tokio::spawn(async move { ble_server::run_ble_server(shared_ble_action_clone, devices).await });
 
             println!("Ble server started");
-            //while !shutdown_flag.load(Ordering::SeqCst) {
-            //  tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-            //}
-            // Handle commands passed along from the server
             business_logic(
                 located_devices,
                 shutdown_flag.clone(),
                 shared_request.clone(),
+                shared_ble_action.clone(),
             )
             .await;
             println!("Shutdown!!!!!!!!");
             process::exit(0);
         }
-        Some((SHUTDOWN_COMMAND, sub_matches)) => {
+        Some((SHUTDOWN_COMMAND, _sub_matches)) => {
             println!("Shutting down the program!!!");
             let mut stream = TcpStream::connect("127.0.0.1:4000").unwrap();
             stream.write_all(SHUTDOWN_COMMAND.as_bytes()).unwrap();
@@ -190,42 +214,43 @@ async fn main() {
 }
 
 async fn business_logic(
-    located_devices: HashMap<String, devices::LocatedDevice>,
+    mut located_devices: HashMap<Uuid, devices::LocatedDevice>,
     shutdown_flag: Arc<AtomicBool>,
-    shared_request_clone: Arc<Mutex<SharedRequest>>,
+    shared_get_request: Arc<Mutex<SharedGetRequest>>,
+    shared_ble_action: Arc<Mutex<SharedBLEAction>>,
 ) {
-    let mut last_device = (String::new(), Action::On, String::new());
+    let mut last_action = (Uuid::from_u128(0x0), Action::On);
     while !shutdown_flag.load(Ordering::SeqCst) {
         {
-            let mut shared_request = shared_request_clone.lock().await;
+            use SharedGetRequest::*;
+            let mut shared_request = shared_get_request.lock().await;
             match &*shared_request {
-                SharedRequest::Command {
-                    ref device,
+                Command {
+                    ref device_uuid,
                     ref action,
-                    ref target,
                 } => {
-                    let target = match target {
-                        Some(t) => t.to_string(),
-                        None => String::new(),
-                    };
-                    if last_device != (device.clone(), action.clone(), target.clone()) {
-                        last_device = (device.clone(), action.clone(), target.clone());
-                        dbg! {&last_device};
-                        let located_device = located_devices.get(&device.clone());
+                    if last_action != (device_uuid.clone(), action.clone()) {
+                        last_action = (device_uuid.clone(), action.clone());
+                        dbg! {&last_action};
+                        let located_device = located_devices.get(&device_uuid);
                         dbg! {&located_device};
+                        let target = match action.get_target() {
+                                Some(t) => t.to_string(),
+                                None => "".to_string()
+                            };
                         match located_device {
                             Some(d) => {
                                 // println!("Command received!!! {}, {}, {}");
                                 let url = format!(
-                                    "http://{}/command?device={}&action={}&target={}",
+                                    "http://{}/command?uuid={}&action={}&target={}",
                                     &d.ip,
-                                    &device,
+                                    &device_uuid,
                                     &action.to_str().to_string(),
                                     &target
                                 );
                                 dbg!(&url);
                                 reqwest::get(&url).await.unwrap();
-                                *shared_request = SharedRequest::NoUpdate;
+                                *shared_request = SharedGetRequest::NoUpdate;
                             }
                             None => {
                                 //println!("no device found");
@@ -233,41 +258,40 @@ async fn business_logic(
                         }
                     }
                 }
-                SharedRequest::SliderInquiry => {
-                    let mut futures = Vec::new();
-
-                    for ld in located_devices.values() {
-                        //let mut future = task::spawn(devices::get_device_status(&ld.ip, &ld.device.name));
-                        let future =
-                            get_device_status_helper(ld.ip.clone(), ld.device.name.clone());
-                        futures.push(future);
-                    }
-
-                    let results = join_all(futures).await;
-                    let mut result2 = HashMap::new();
-                    for item in results {
-                        let one = item.clone();
-                        let two = item.clone();
-                        result2.insert(one.unwrap().name, two.unwrap().target);
-                    }
-                    let response = format!(
-                        "{}{}",
-                        result2.get("kitchen light").unwrap().to_string(),
-                        result2.get("bedroom light").unwrap().to_string()
-                    );
-                    dbg! {&response};
-                    *shared_request = SharedRequest::SliderResponse { response: response };
-                }
-                SharedRequest::SliderResponse { response } => {}
-                SharedRequest::NoUpdate => {
+                NoUpdate => {
                     // println!("6666666666666 NoUpdate!!!");
                 }
+            }
+        }
+        {
+            use SharedBLEAction::*;
+            let mut shared_action = shared_ble_action.lock().await;
+            match &*shared_action {
+                Command {
+                    ref device_uuid,
+                    ref action,
+                } => {
+                    let located_device = located_devices.get_mut(&device_uuid).unwrap();
+                    let _ = located_device.device.take_action(action.clone());
+                    *shared_action = NoUpdate;
+                },
+                TargetInquiry {
+                    ref device_uuid,
+                } => {
+                    let located_device = located_devices.get(&device_uuid).unwrap();
+                    let device = get_device_status_helper(located_device.ip.clone(), device_uuid.clone()).await; 
+                    *shared_action = TargetResponse {
+                            target: device.unwrap().target.clone()
+                        };
+                },
+                TargetResponse { .. } => {},
+                NoUpdate => {},
             }
         }
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
     }
 }
 
-async fn get_device_status_helper(ip: String, name: String) -> Result<Device, String> {
-    devices::get_device_status(&ip, &name).await
+async fn get_device_status_helper(ip: String, uuid: Uuid) -> Result<Device, String> {
+    devices::get_device_status(&ip, &uuid).await
 }

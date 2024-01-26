@@ -5,45 +5,32 @@ use std::process::Command;
 use regex::Regex;
 use reqwest;
 
-use lazy_static::lazy_static;
+use bluer::Uuid;
 use serde::{Deserialize, Serialize};
 use serde_json;
 use serde_json::{Error, Value};
 
 use device::Device;
 
-lazy_static! {
-    pub static ref DEVICES: HashMap<&'static str, &'static str> = {
-        let mut d = HashMap::new();
-        d.insert("bedroom light", "bl");
-        d.insert("kitchen light", "kl");
-        d
-    };
-}
-
-pub fn get_device_name_from_abbreviation(abbr: &str) -> Result<&'static str, &'static str> {
-    for (k, v) in DEVICES.iter() {
-        if v == &abbr {
-            return Ok(k);
-        }
-    }
-    Err("Bad Abbreviation")
-}
-
+/// A struct to store a device along with the IP address where it's located
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, Serialize)]
 pub struct LocatedDevice {
     pub device: Device,
     pub ip: String,
 }
 
-pub async fn get_devices() -> HashMap<String, LocatedDevice> {
+/// Get all of the devices along with their locateions.
+///
+/// Returns a HashMap where the keys are device Uuids
+/// and values are LocatedDevices
+pub async fn get_devices() -> HashMap<Uuid, LocatedDevice> {
     let ips = get_ips();
 
-    let mut devices: HashMap<String, LocatedDevice> = HashMap::new();
+    let mut devices: HashMap<Uuid, LocatedDevice> = HashMap::new();
 
     let futures: Vec<_> = ips
         .into_iter()
-        .map(|ip| tokio::spawn(get_node(ip)))
+        .map(|ip| tokio::spawn(get_node_devices(ip)))
         .collect();
 
     let results: Vec<_> = join_all(futures).await;
@@ -53,8 +40,8 @@ pub async fn get_devices() -> HashMap<String, LocatedDevice> {
             let result = result.unwrap();
             if result.is_some() {
                 let result = result.unwrap();
-                for (name, located_device) in result {
-                    devices.insert(name, located_device);
+                for (uuid, located_device) in result {
+                    devices.insert(uuid, located_device);
                 }
             }
         }
@@ -62,12 +49,16 @@ pub async fn get_devices() -> HashMap<String, LocatedDevice> {
     devices
 }
 
-pub async fn get_device_status(ip: &String, name: &String) -> Result<Device, String> {
-    let url = format!("http://{}/status?device={}", ip, name.replace(" ", "%20"));
+/// Gets the status of a device
+///
+/// - 'ip': the ip address of the node that the device is on
+/// - 'uuid': the uuid of the device
+pub async fn get_device_status(ip: &String, uuid: &Uuid) -> Result<Device, String> {
+    let url = format!("http://{}/status?uuid={}", ip, uuid.to_string());
     dbg!(&url);
     let device_text = match reqwest::get(&url).await {
         Ok(response) => match response.text().await {
-            Ok(maybe_device_name) => maybe_device_name,
+            Ok(maybe_device_text) => maybe_device_text,
             Err(_) => return Err("No response or something in get_device_status".to_string()),
         },
         Err(_) => return Err("No response or something in get_device_status".to_string()),
@@ -80,24 +71,25 @@ pub async fn get_device_status(ip: &String, name: &String) -> Result<Device, Str
     }
 }
 
-async fn get_node(ip: String) -> Option<HashMap<String, LocatedDevice>> {
+async fn get_node_devices(ip: String) -> Option<HashMap<Uuid, LocatedDevice>> {
     let url = format!("http://{}/devices", ip);
     dbg!(&url);
     let device_text = match reqwest::get(&url).await {
         Ok(response) => match response.text().await {
-            Ok(maybe_device_name) => maybe_device_name,
+            Ok(maybe_device_text) => maybe_device_text,
             Err(_) => return None,
         },
         Err(_) => return None,
     };
     let device_json: Value = serde_json::from_str(device_text.as_str()).unwrap();
-    let mut located_devices: HashMap<String, LocatedDevice> = HashMap::new();
+    let mut located_devices: HashMap<Uuid, LocatedDevice> = HashMap::new();
     if device_json.is_object() {
-        for (key, value) in device_json.as_object().unwrap() {
+        for (_, value) in device_json.as_object().unwrap() {
+            let device = Device::from_json(&value.to_string()).unwrap();
             located_devices.insert(
-                (key.clone()).to_string(),
+                device.uuid.clone(),
                 LocatedDevice {
-                    device: Device::from_json(&value.to_string()).unwrap(),
+                    device,
                     ip: ip.clone(),
                 },
             );

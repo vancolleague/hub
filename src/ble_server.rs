@@ -13,22 +13,23 @@ use bluer::{
 use futures::FutureExt;
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
-    sync::Mutex,
+    sync::{mpsc, Mutex},
     time::sleep,
 };
 
 use device::{Action, Device};
 
-use crate::devices::DEVICES;
-use crate::thread_sharing::SharedRequest;
+use crate::thread_sharing::*;
 
-const SERVICE_UUID: Uuid = Uuid::from_u128(0x36bc0fe1b00742809ec6b36c8bc98537);
-const SLIDERS_UUID: Uuid = Uuid::from_u128(0x2a4fae8107134e1fa8187ac56e4f13e4);
-const CHARACTERISTIC_UUID: Uuid = Uuid::from_u128(0xa584507902e74f44b67902b90775abda);
+const KITCHEN_UUID: Uuid = Uuid::from_u128(0x36bc0fe1b00742809ec6b36c8bc98537);
+//const KITCHEN_SET_UUID: Uuid = Uuid::from_u128(0x36bc0fe1b00742809ec6b36c8bc98537);
+const BEDROOM_UUID: Uuid = Uuid::from_u128(0x584507902e74f44b67902b90775abda);
+const SET_UUID: Uuid = Uuid::from_u128(0x2a4fae8107134e1fa8187ac56e4f13e4);
+const _ON_UUID: Uuid = Uuid::from_u128(0x928e9b929939486b998d69613f89a9a6);
 #[allow(dead_code)]
 const MANUFACTURER_ID: u16 = 0x45F1;
 
-pub async fn run_ble_server(shared_request: Arc<Mutex<SharedRequest>>) {
+pub async fn run_ble_server(shared_action: Arc<Mutex<SharedBLEAction>>, _devices: Vec<(String, Uuid)>) {
     let session = bluer::Session::new().await.unwrap();
     let adapter = session.default_adapter().await.unwrap();
     adapter.set_powered(true).await.unwrap();
@@ -41,7 +42,7 @@ pub async fn run_ble_server(shared_request: Arc<Mutex<SharedRequest>>) {
     let mut manufacturer_data = BTreeMap::new();
     manufacturer_data.insert(MANUFACTURER_ID, vec![0x21, 0x22, 0x23, 0x24]);
     let le_advertisement = Advertisement {
-        service_uuids: vec![SERVICE_UUID].into_iter().collect(),
+        service_uuids: vec![KITCHEN_UUID, BEDROOM_UUID].into_iter().collect(),
         manufacturer_data,
         discoverable: Some(true),
         local_name: Some("VanColleague".to_string()),
@@ -53,39 +54,36 @@ pub async fn run_ble_server(shared_request: Arc<Mutex<SharedRequest>>) {
         "Serving GATT service on Bluetooth adapter {}",
         adapter.name()
     );
-    let shared_read_request = shared_request.clone();
-    let shared_write_request = shared_request.clone();
+    let shared_kitchen_set_read = shared_action.clone();
+    let shared_kitchen_set_write = shared_action.clone();
+    let shared_kitchen_set_notify = shared_action.clone();
+    let _shared_bathroom_set_read = shared_action.clone();
     let value = Arc::new(Mutex::new(vec![0x10, 0x01, 0x01, 0x10]));
-    let value_read = value.clone();
-    let value_write = value.clone();
     let value_notify = value.clone();
     let value_read2 = value.clone();
     let value_write2 = value.clone();
-    let value_notify2 = value.clone();
     let app = Application {
         services: vec![Service {
-            uuid: SERVICE_UUID,
+            uuid: KITCHEN_UUID,
             primary: true,
             characteristics: vec![
                 Characteristic {
-                    uuid: SLIDERS_UUID,
+                    uuid: SET_UUID,
                     read: Some(CharacteristicRead {
                         read: true,
                         fun: Box::new(move |req| {
-                            let value = value_read.clone();
-                            let shared_request = shared_read_request.clone();
+                            dbg!(&req); // todo: does req have the uuid to look up the device?
+                            let shared_action_clone = shared_kitchen_set_read.clone();
                             async move {
                                 {
-                                    let value = value.lock().await.clone();
-                                    println!("Read request {:?} with value {:x?}", &req, &value);
-                                    let mut shared_request_guard = shared_request.lock().await;
-                                    *shared_request_guard = SharedRequest::SliderInquiry;
+                                    let mut shared_action_guard = shared_action_clone.lock().await;
+                                    *shared_action_guard = SharedBLEAction::TargetInquiry { device_uuid: KITCHEN_UUID };
                                 }
                                 println!("about to wait for stuff");
                                 let response =
-                                    wait_for_inquiry_response(shared_request.clone()).await;
+                                    await_for_inquiry_response(shared_action_clone.clone()).await;
                                 println!("BLE response: {}", &response);
-                                Ok(response.as_bytes().to_vec())
+                                Ok(response.to_string().as_bytes().to_vec())
                             }
                             .boxed()
                         }),
@@ -94,38 +92,17 @@ pub async fn run_ble_server(shared_request: Arc<Mutex<SharedRequest>>) {
                     write: Some(CharacteristicWrite {
                         write: true,
                         write_without_response: true,
-                        method: CharacteristicWriteMethod::Fun(Box::new(move |new_value, req| {
-                            let value = value_write.clone();
-                            let shared_request = shared_write_request.clone();
+                        method: CharacteristicWriteMethod::Fun(Box::new(move |new_value, _req| {
+                            let shared_action_clone = shared_kitchen_set_write.clone();
                             async move {
                                 let text = std::str::from_utf8(&new_value).unwrap();
-                                let device_abbr = text.chars().take(2).collect::<String>();
-                                let mut device = String::new();
-                                for (k, v) in DEVICES.iter() {
-                                    if v == &device_abbr.as_str() {
-                                        device = k.to_string();
-                                        break;
-                                    }
-                                }
-                                let action = text.chars().skip(2).take(2).collect::<String>();
-                                let action = Action::from_str_abbr(action.as_str()).unwrap();
-                                let target = if action == Action::Set {
-                                    let target = text.chars().skip(4).take(2).collect::<String>();
-                                    let target: usize = target.parse().unwrap();
-                                    Some(target)
-                                } else {
-                                    None
-                                };
-                                let mut shared_request_guard = shared_request.lock().await;
-                                *shared_request_guard = SharedRequest::Command {
-                                    device: device,
-                                    action: action,
-                                    target: target,
-                                };
-                                // println!("Write request {:?} with value {:x?}", &req, &new_value);
+                                let target: usize = text.parse().unwrap();
                                 {
-                                    let mut value = value.lock().await;
-                                    *value = new_value;
+                                    let mut shared_action_guard = shared_action_clone.lock().await;
+                                    *shared_action_guard = SharedBLEAction::Command {
+                                        device_uuid: KITCHEN_UUID,
+                                        action: Action::Set { target: target },
+                                    };
                                 }
                                 Ok(())
                             }
@@ -137,6 +114,7 @@ pub async fn run_ble_server(shared_request: Arc<Mutex<SharedRequest>>) {
                         notify: true,
                         method: CharacteristicNotifyMethod::Fun(Box::new(move |mut notifier| {
                             let value = value_notify.clone();
+                            let _shared_action_clone = shared_kitchen_set_notify.clone();
                             async move {
                                 tokio::spawn(async move {
                                     println!(
@@ -169,7 +147,7 @@ pub async fn run_ble_server(shared_request: Arc<Mutex<SharedRequest>>) {
                     ..Default::default()
                 },
                 Characteristic {
-                    uuid: CHARACTERISTIC_UUID,
+                    uuid: BEDROOM_UUID,
                     read: Some(CharacteristicRead {
                         read: true,
                         fun: Box::new(move |req| {
@@ -199,41 +177,7 @@ pub async fn run_ble_server(shared_request: Arc<Mutex<SharedRequest>>) {
                         ..Default::default()
                     }),
                     notify: Some(CharacteristicNotify {
-                        notify: true,
-                        method: CharacteristicNotifyMethod::Fun(Box::new(move |mut notifier| {
-                            let value = value_notify2.clone();
-                            async move {
-                                tokio::spawn(async move {
-                                    println!(
-                                        "Notification session start with confirming={:?}",
-                                        notifier.confirming()
-                                    );
-                                    let mut i = 0;
-                                    loop {
-                                        {
-                                            let mut value = value.lock().await;
-                                            let text = format!("hello world {i}");
-                                            println!("Notifying with value {:x?}", &*value);
-                                            //if let Err(err) = notifier.notify(value.to_vec()).await {
-                                            if let Err(err) =
-                                                notifier.notify(text.as_bytes().to_vec()).await
-                                            {
-                                                println!("Notification error: {}", &err);
-                                                break;
-                                            }
-                                            println!("Decrementing each element by one");
-                                            for v in &mut *value {
-                                                *v = v.saturating_sub(1);
-                                            }
-                                            i += 1;
-                                        }
-                                        sleep(Duration::from_secs(5)).await;
-                                    }
-                                    println!("Notification session stop");
-                                });
-                            }
-                            .boxed()
-                        })),
+                        notify: false,
                         ..Default::default()
                     }),
                     ..Default::default()
@@ -256,26 +200,15 @@ pub async fn run_ble_server(shared_request: Arc<Mutex<SharedRequest>>) {
     sleep(Duration::from_secs(1)).await;
 }
 
-// todo: this is super ugly
-async fn wait_for_inquiry_response(shared_request: Arc<Mutex<SharedRequest>>) -> String {
+async fn await_for_inquiry_response(shared_action: Arc<Mutex<SharedBLEAction>>) -> usize {
     println!("Waiting???????????");
-    {
-        dbg! {shared_request.lock().await};
-    }
     loop {
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
         {
-            let lock = shared_request.lock().await;
-            //   dbg! {&lock};
-            if let SharedRequest::SliderResponse { .. } = *lock {
-                break;
+            let lock = shared_action.lock().await;
+            if let SharedBLEAction::TargetResponse { target } = &*lock {
+                return target.clone();
             }
         }
-    }
-    let lock = shared_request.lock().await;
-    if let SharedRequest::SliderResponse { response } = &*lock {
-        response.clone()
-    } else {
-        String::new()
     }
 }
