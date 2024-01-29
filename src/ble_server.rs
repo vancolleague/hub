@@ -22,7 +22,6 @@ use device::{Action, Device};
 use crate::thread_sharing::*;
 
 const KITCHEN_UUID: Uuid = Uuid::from_u128(0x36bc0fe1b00742809ec6b36c8bc98537);
-//const KITCHEN_SET_UUID: Uuid = Uuid::from_u128(0x36bc0fe1b00742809ec6b36c8bc98537);
 const BEDROOM_UUID: Uuid = Uuid::from_u128(0x584507902e74f44b67902b90775abda);
 const SET_UUID: Uuid = Uuid::from_u128(0x2a4fae8107134e1fa8187ac56e4f13e4);
 const _ON_UUID: Uuid = Uuid::from_u128(0x928e9b929939486b998d69613f89a9a6);
@@ -203,7 +202,6 @@ pub async fn run_ble_server(shared_action: Arc<Mutex<SharedBLEAction>>, _devices
 async fn await_for_inquiry_response(shared_action: Arc<Mutex<SharedBLEAction>>) -> usize {
     println!("Waiting???????????");
     loop {
-        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
         {
             let lock = shared_action.lock().await;
             if let SharedBLEAction::TargetResponse { target } = &*lock {

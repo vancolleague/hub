@@ -288,7 +288,6 @@ async fn business_logic(
                 NoUpdate => {},
             }
         }
-        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
     }
 }
 
