@@ -148,7 +148,7 @@ async fn main() {
                 println!("Skipping getting devices!");
             } else {
                 println!("Getting Devices!!");
-                match node_count { 
+                match node_count {
                     Some(nc) => {
                         let nc: usize = nc.parse().unwrap();
                         while located_devices.len() < nc && !shutdown_flag.load(Ordering::SeqCst) {
@@ -171,9 +171,13 @@ async fn main() {
             // Start the http server with the appropreate info passed in
             let shared_config_clone = shared_config.clone();
             let shared_request_clone = shared_request.clone();
-            let devices = located_devices.iter().map(|(u, ld)| (ld.device.name.clone(), u.clone())).collect::<Vec<(String, Uuid)>>();
+            let devices = located_devices
+                .iter()
+                .map(|(u, ld)| (ld.device.name.clone(), u.clone()))
+                .collect::<Vec<(String, Uuid)>>();
             tokio::spawn(async move {
-                http_server::run_http_server(shared_config_clone, shared_request_clone, devices).await
+                http_server::run_http_server(shared_config_clone, shared_request_clone, devices)
+                    .await
             });
             println!("Http server started");
 
@@ -184,7 +188,9 @@ async fn main() {
                 .iter()
                 .map(|(_, ld)| (ld.device.name.clone(), ld.device.uuid.clone()))
                 .collect();
-            tokio::spawn(async move { ble_server::run_ble_server(shared_ble_action_clone, devices).await });
+            tokio::spawn(async move {
+                ble_server::run_ble_server(shared_ble_action_clone, devices).await
+            });
 
             println!("Ble server started");
             business_logic(
@@ -231,16 +237,13 @@ async fn business_logic(
                 } => {
                     if last_action != (device_uuid.clone(), action.clone()) {
                         last_action = (device_uuid.clone(), action.clone());
-                        dbg! {&last_action};
                         let located_device = located_devices.get(&device_uuid);
-                        dbg! {&located_device};
                         let target = match action.get_target() {
-                                Some(t) => t.to_string(),
-                                None => "".to_string()
-                            };
+                            Some(t) => t.to_string(),
+                            None => "".to_string(),
+                        };
                         match located_device {
                             Some(d) => {
-                                // println!("Command received!!! {}, {}, {}");
                                 let url = format!(
                                     "http://{}/command?uuid={}&action={}&target={}",
                                     &d.ip,
@@ -248,7 +251,6 @@ async fn business_logic(
                                     &action.to_str().to_string(),
                                     &target
                                 );
-                                dbg!(&url);
                                 reqwest::get(&url).await.unwrap();
                                 *shared_request = SharedGetRequest::NoUpdate;
                             }
@@ -272,20 +274,35 @@ async fn business_logic(
                     ref action,
                 } => {
                     let located_device = located_devices.get_mut(&device_uuid).unwrap();
-                    let _ = located_device.device.take_action(action.clone());
+
+                    let target = match &action.get_target() {
+                        Some(t) => t.to_string(),
+                        None => "".to_string(),
+                    };
+
+                    let url = format!(
+                        "http://{}/command?uuid={}&action={}&target={}",
+                        &located_device.ip,
+                        &device_uuid,
+                        &action.to_str().to_string(),
+                        &target,
+                    );
+                    dbg!(&url);
+                    reqwest::get(&url).await.unwrap();
                     *shared_action = NoUpdate;
-                },
-                TargetInquiry {
-                    ref device_uuid,
-                } => {
+                }
+                TargetInquiry { ref device_uuid } => {
+                    dbg!(&device_uuid);
                     let located_device = located_devices.get(&device_uuid).unwrap();
-                    let device = get_device_status_helper(located_device.ip.clone(), device_uuid.clone()).await; 
+                    let device =
+                        get_device_status_helper(located_device.ip.clone(), device_uuid.clone())
+                            .await;
                     *shared_action = TargetResponse {
-                            target: device.unwrap().target.clone()
-                        };
-                },
-                TargetResponse { .. } => {},
-                NoUpdate => {},
+                        target: device.unwrap().target.clone(),
+                    };
+                }
+                TargetResponse { .. } => {}
+                NoUpdate => {}
             }
         }
     }
