@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::{thread, time};
 
 use bluer::Uuid;
-use device::{Action, Device};
+use device::{Action, Device, DeviceType, DEVICE_TYPES};
 use fs2::FileExt;
 use futures::future::join_all;
 use tokio::{
@@ -184,10 +184,13 @@ async fn main() {
             // Start the bluetooth server
             let shared_ble_action = Arc::new(Mutex::new(thread_sharing::SharedBLEAction::NoUpdate));
             let shared_ble_action_clone = shared_ble_action.clone();
-            let devices: Vec<(String, Uuid)> = located_devices
+            let mut devices: Vec<(String, Uuid)> = located_devices
                 .iter()
                 .map(|(_, ld)| (ld.device.name.clone(), ld.device.uuid.clone()))
                 .collect();
+            for (_, n, u) in DEVICE_TYPES.iter() {
+                devices.push((n.to_string(), Uuid::from_u128(u.clone())));
+            }
             tokio::spawn(async move {
                 ble_server::run_ble_server(shared_ble_action_clone, devices).await
             });
@@ -273,26 +276,25 @@ async fn business_logic(
                     ref device_uuid,
                     ref action,
                 } => {
-                    let located_device = located_devices.get_mut(&device_uuid).unwrap();
-
-                    let target = match &action.get_target() {
-                        Some(t) => t.to_string(),
-                        None => "".to_string(),
-                    };
-
-                    let url = format!(
-                        "http://{}/command?uuid={}&action={}&target={}",
-                        &located_device.ip,
-                        &device_uuid,
-                        &action.to_str().to_string(),
-                        &target,
-                    );
-                    dbg!(&url);
-                    reqwest::get(&url).await.unwrap();
+                    let mut already_processed = false;
+                    for (t, _, u) in DEVICE_TYPES.iter() {
+                        if device_uuid == &Uuid::from_u128(u.clone()) {
+                            for (u, ld) in located_devices.iter_mut() {
+                                match ld.device.device_type {
+                                    Some(t) => update_device(&ld.ip, &u, &action).await,
+                                    _ => {}
+                                }
+                            }
+                            already_processed = true;
+                        };
+                    }
+                    if !already_processed {
+                        let located_device = located_devices.get_mut(&device_uuid).unwrap();
+                        update_device(&located_device.ip, &device_uuid, &action).await;
+                    }
                     *shared_action = NoUpdate;
                 }
                 TargetInquiry { ref device_uuid } => {
-                    dbg!(&device_uuid);
                     let located_device = located_devices.get(&device_uuid).unwrap();
                     let device =
                         get_device_status_helper(located_device.ip.clone(), device_uuid.clone())
@@ -308,6 +310,24 @@ async fn business_logic(
     }
 }
 
+async fn update_device(ip: &String, uuid: &Uuid, action: &Action) {
+    let target = match action.get_target() {
+        Some(t) => t.to_string(),
+        None => "".to_string(),
+    };
+
+    let url = format!(
+        "http://{}/command?uuid={}&action={}&target={}",
+        &ip,
+        &uuid.to_string(),
+        &action.to_str().to_string(),
+        &target,
+    );
+    dbg!(&url);
+    reqwest::get(&url).await.unwrap();
+}
+
+/// Needed so that the ip and uuid are owned and thus not dropped
 async fn get_device_status_helper(ip: String, uuid: Uuid) -> Result<Device, String> {
     devices::get_device_status(&ip, &uuid).await
 }

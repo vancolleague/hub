@@ -17,7 +17,7 @@ use tokio::{
     time::sleep,
 };
 
-use device::{Action, Device};
+use device::{Action, Device, DeviceType};
 
 use crate::thread_sharing::*;
 
@@ -118,40 +118,6 @@ pub async fn run_ble_server(
                         })),
                         ..Default::default()
                     }),
-                    notify: Some(CharacteristicNotify {
-                        notify: true,
-                        method: CharacteristicNotifyMethod::Fun(Box::new(move |mut notifier| {
-                            let value = value_notify2.clone();
-                            //  let _shared_action_clone = shared_kitchen_set_notify.clone();
-                            async move {
-                                tokio::spawn(async move {
-                                    println!(
-                                        "Notification session start with confirming={:?}",
-                                        notifier.confirming()
-                                    );
-                                    loop {
-                                        {
-                                            let mut value = value.lock().await;
-                                            println!("Notifying with value {:x?}", &*value);
-                                            if let Err(err) = notifier.notify(value.to_vec()).await
-                                            {
-                                                println!("Notification error: {}", &err);
-                                                break;
-                                            }
-                                            println!("Decrementing each element by one");
-                                            for v in &mut *value {
-                                                *v = v.saturating_sub(1);
-                                            }
-                                        }
-                                        sleep(Duration::from_secs(5)).await;
-                                    }
-                                    println!("Notification session stop");
-                                });
-                            }
-                            .boxed()
-                        })),
-                        ..Default::default()
-                    }),
                     ..Default::default()
                 }],
                 ..Default::default()
@@ -204,40 +170,6 @@ pub async fn run_ble_server(
                         })),
                         ..Default::default()
                     }),
-                    notify: Some(CharacteristicNotify {
-                        notify: true,
-                        method: CharacteristicNotifyMethod::Fun(Box::new(move |mut notifier| {
-                            let value = value_notify.clone();
-                            let _shared_action_clone = shared_kitchen_set_notify.clone();
-                            async move {
-                                tokio::spawn(async move {
-                                    println!(
-                                        "Notification session start with confirming={:?}",
-                                        notifier.confirming()
-                                    );
-                                    loop {
-                                        {
-                                            let mut value = value.lock().await;
-                                            println!("Notifying with value {:x?}", &*value);
-                                            if let Err(err) = notifier.notify(value.to_vec()).await
-                                            {
-                                                println!("Notification error: {}", &err);
-                                                break;
-                                            }
-                                            println!("Decrementing each element by one");
-                                            for v in &mut *value {
-                                                *v = v.saturating_sub(1);
-                                            }
-                                        }
-                                        sleep(Duration::from_secs(5)).await;
-                                    }
-                                    println!("Notification session stop");
-                                });
-                            }
-                            .boxed()
-                        })),
-                        ..Default::default()
-                    }),
                     ..Default::default()
                 }],
                 ..Default::default()
@@ -246,37 +178,33 @@ pub async fn run_ble_server(
                 uuid: VOICE_UUID,
                 primary: true,
                 characteristics: vec![Characteristic {
-                    uuid: VOICE_UUID,
-                    read: Some(CharacteristicRead {
-                        read: false,
-                        ..Default::default()
-                    }),
+                    uuid: SET_UUID,
                     write: Some(CharacteristicWrite {
                         write: true,
                         write_without_response: true,
                         method: CharacteristicWriteMethod::Fun(Box::new(move |new_value, req| {
+                            println!("voice recieved");
                             let shared_action_clone = shared_voice_set_write.clone();
                             let devices_clone = devices.clone();
                             async move {
                                 let command = std::str::from_utf8(&new_value).unwrap();
                                 let command = command.to_lowercase();
-                                let mut command = command.split_whitespace();
-
+                                let command = command.trim_end();
+                                let command = command.trim_end_matches('\0');
+                                let command = command.split_whitespace().collect::<Vec<&str>>();
+                                let mut command = command.iter();
                                 let mut device = String::new();
 
-                                while devices_clone
+                                while !devices_clone
                                     .clone()
                                     .iter()
                                     .map(|(n, _)| n)
                                     .collect::<Vec<&String>>()
                                     .contains(&&device)
                                 {
-                                    //while !DEVICES.contains_key(&device.as_str()) {
                                     let word = match command.next() {
                                         Some(w) => w,
                                         None => {
-                                            //           return HttpResponse::Ok()
-                                            //             .body("Oops, we didn't get a device!")
                                             panic!("Didn't get the device name");
                                         }
                                     };
@@ -287,7 +215,6 @@ pub async fn run_ble_server(
                                         device = format!("{} {}", &device, &word);
                                     }
                                 }
-
                                 let mut uuid = Uuid::from_u128(0x0);
                                 for (n, u) in devices_clone.iter() {
                                     if &device == n {
@@ -296,11 +223,11 @@ pub async fn run_ble_server(
                                     }
                                 }
                                 if uuid.as_u128() == 0x0 {
-                                    //   return HttpResponse::Ok().body("Couldn't get the uuid of the named device.");
                                     panic!("didn't get the device id");
                                 }
 
                                 let action = match command.next() {
+                                    Some(&"at") => "set",
                                     Some(a) => a,
                                     None => panic!("failed to get an action"), //return HttpResponse::Ok().body("Oops, we didn't get an action!"),
                                 };
@@ -309,21 +236,40 @@ pub async fn run_ble_server(
                                         if t.is_empty() {
                                             None
                                         } else {
-                                            match t.parse::<usize>() {
+                                            let t: usize = match t {
+                                                &"zero" => 0,
+                                                &"one" => 1,
+                                                &"1:00" => 1,
+                                                &"two" => 2,
+                                                &"too" => 2,
+                                                &"to" => 2,
+                                                &"2:00" => 2,
+                                                &"three" => 3,
+                                                &"3:00" => 3,
+                                                &"four" => 4,
+                                                &"4:00" => 4,
+                                                &"for" => 4,
+                                                &"five" => 5,
+                                                &"5:00" => 5,
+                                                &"six" => 6,
+                                                &"6:00" => 6,
+                                                &"seven" => 7,
+                                                &"7:00" => 7,
+                                                _ => panic!("Bad target spoken"),
+                                            };
+                                            Some(t)
+                                            /*match t.parse::<usize>() {
                                                 Ok(n) => {
                                                     if n < 8 {
                                                         Some(n)
                                                     } else {
                                                         panic!("Target's too high");
-                                                        // return HttpResponse::Ok().body("Oops, Target should be 0 <= t < 8");
                                                     }
                                                 }
                                                 Err(_) => {
                                                     panic!("parse issue");
-                                                    //return HttpResponse::Ok()
-                                                    //  .body("Oops, Target should be a number, 0 though 7")
                                                 }
-                                            }
+                                            }*/
                                         }
                                     }
                                     None => None,
@@ -333,8 +279,6 @@ pub async fn run_ble_server(
                                     Ok(a) => a,
                                     Err(_) => {
                                         panic!("Issue creating the action");
-                                        //                                        return HttpResponse::Ok()
-                                        //                                          .body("Action wasn't a valid action.")
                                     }
                                 };
 
@@ -349,10 +293,6 @@ pub async fn run_ble_server(
                             }
                             .boxed()
                         })),
-                        ..Default::default()
-                    }),
-                    notify: Some(CharacteristicNotify {
-                        notify: false,
                         ..Default::default()
                     }),
                     ..Default::default()
